@@ -32,6 +32,11 @@ class Yampee_Di_Container
 	private $parameters;
 
 	/**
+	 * @var array $definitions
+	 */
+	private $definitions;
+
+	/**
 	 * Constructor
 	 */
 	public function __construct()
@@ -39,6 +44,7 @@ class Yampee_Di_Container
 		$this->services = array();
 		$this->tags = array();
 		$this->parameters = array();
+		$this->definitions = array();
 
 		$this->set('container', $this);
 		$this->set('container.dumper', new Yampee_Di_Dumper());
@@ -47,15 +53,11 @@ class Yampee_Di_Container
 	/**
 	 * Build the container
 	 *
-	 * @param array $servicesDefinitions
-	 * @param array $parameters
 	 * @throws InvalidArgumentException
 	 */
-	public function build(array $servicesDefinitions, array $parameters = array())
+	public function build()
 	{
-		$this->parameters = $parameters;
-
-		foreach($servicesDefinitions as $serviceName => $serviceDefinition) {
+		foreach($this->definitions as $serviceName => $serviceDefinition) {
 
 			$serviceDefinition = array_merge(array(
 				'class' => '',
@@ -124,6 +126,29 @@ class Yampee_Di_Container
 
 			$this->set($serviceName, $instance);
 		}
+	}
+
+	/**
+	 * @param string $name
+	 * @param array  $servicesDefinition
+	 * @return Yampee_Di_Container
+	 */
+	public function registerDefinition($name, array $servicesDefinition)
+	{
+		$this->definitions[(string) $name] = $servicesDefinition;
+
+		return $this;
+	}
+
+	/**
+	 * @param array $servicesDefinitions
+	 * @return Yampee_Di_Container
+	 */
+	public function registerDefinitions(array $servicesDefinitions)
+	{
+		$this->definitions = array_merge($this->definitions, $servicesDefinitions);
+
+		return $this;
 	}
 
 	/**
@@ -197,6 +222,16 @@ class Yampee_Di_Container
 	public function setParameter($paramName, $value)
 	{
 		$this->parameters[$paramName] = $value;
+		return $this;
+	}
+
+	/**
+	 * @param array $parameters
+	 * @return Yampee_Di_Container
+	 */
+	public function setParameters(array $parameters)
+	{
+		$this->parameters = $parameters;
 		return $this;
 	}
 
