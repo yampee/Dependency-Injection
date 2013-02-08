@@ -47,10 +47,9 @@ class Yampee_Di_Bridge_Annotation_Service extends Yampee_Annotations_Definition_
 	 * Execute an action when the annotation is matched.
 	 *
 	 * @param Reflector $reflector
-	 * @param array     $arguments
 	 * @return mixed
 	 */
-	public function execute(Reflector $reflector, array $arguments)
+	public function execute(Reflector $reflector)
 	{
 		$definition = array(
 			'class' => $reflector->getName(),
