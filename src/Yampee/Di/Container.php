@@ -57,74 +57,22 @@ class Yampee_Di_Container
 	 */
 	public function build()
 	{
-		foreach($this->definitions as $serviceName => $serviceDefinition) {
+		$this->checkBuildPossibility();
 
-			$serviceDefinition = array_merge(array(
-				'class' => '',
-				'arguments' => array()
-			), $serviceDefinition);
+		$parametersRemplacements = array();
 
-			if (! class_exists($serviceDefinition['class']) && isset($serviceDefinition['file'])) {
-				require $serviceDefinition['file'];
-			}
+		foreach ($this->parameters as $paramName => $paramValue) {
+			$parametersRemplacements['%'.$paramName.'%'] = $paramValue;
+		}
 
-			if (! class_exists($serviceDefinition['class'])) {
-				throw new InvalidArgumentException(sprintf(
-					'Class %s not found in service %s.',
-					$serviceDefinition['class'], $serviceName
-				));
-			}
+		$this->parameters = $this->remplaceParameters(
+			$this->parameters,
+			array_keys($parametersRemplacements),
+			array_values($parametersRemplacements)
+		);
 
-			$arguments = array();
-			$i = 1;
-
-			foreach ($serviceDefinition['arguments'] as $argument) {
-				if (is_string($argument) && substr($argument, 0, 1) == '%' && substr($argument, -1) == '%') {
-					$paramName = substr($argument, 1, -1);
-
-					if (! $this->hasParameter($paramName)) {
-						throw new InvalidArgumentException(sprintf(
-							'Config element %s does not exists in service definition %s (argument %s)',
-							$paramName, $serviceName, $i
-						));
-					}
-
-					$arguments[] = $this->getParameter($paramName);
-				} elseif (is_string($argument) && substr($argument, 0, 1) == '@') {
-					$referenceName = substr($argument, 1);
-
-					if (! $this->has($referenceName)) {
-						throw new InvalidArgumentException(sprintf(
-							'Reference at %s is not available in service definition %s (argument %s)',
-							$referenceName, $serviceName, $i
-						));
-					}
-
-					$arguments[] = $this->get($referenceName);
-				} else {
-					$arguments[] = $argument;
-				}
-
-				$i++;
-			}
-
-			$reflection = new ReflectionClass($serviceDefinition['class']);
-			$instance = $reflection->newInstanceArgs($arguments);
-
-			if (isset($serviceDefinition['calls']) && ! empty($serviceDefinition['calls'])) {
-				foreach ($serviceDefinition['calls'] as $methodName => $methodArgs) {
-					$method = new ReflectionMethod($instance, $methodName);
-					$method->invokeArgs($instance, $methodArgs);
-				}
-			}
-
-			if (isset($serviceDefinition['tags']) && ! empty($serviceDefinition['tags'])) {
-				foreach ($serviceDefinition['tags'] as $tag) {
-					$this->tags[$serviceName][] = $tag;
-				}
-			}
-
-			$this->set($serviceName, $instance);
+		foreach ($this->definitions as $name => $definition) {
+			$this->buildDefinition($name);
 		}
 	}
 
@@ -149,6 +97,25 @@ class Yampee_Di_Container
 		$this->definitions = array_merge($this->definitions, $servicesDefinitions);
 
 		return $this;
+	}
+
+	/**
+	 * @param array $definitions
+	 * @return Yampee_Di_Container
+	 */
+	public function setDefinitions(array $definitions)
+	{
+		$this->definitions = $definitions;
+
+		return $this;
+	}
+
+	/**
+	 * @return array
+	 */
+	public function getDefinitions()
+	{
+		return $this->definitions;
 	}
 
 	/**
@@ -199,9 +166,16 @@ class Yampee_Di_Container
 	/**
 	 * @param $paramName
 	 * @return mixed
+	 * @throws InvalidArgumentException
 	 */
 	public function getParameter($paramName)
 	{
+		if (! $this->hasParameter($paramName)) {
+			throw new InvalidArgumentException(sprintf(
+				'Non-existent parameter "%s" requested', $paramName
+			));
+		}
+
 		return $this->parameters[$paramName];
 	}
 
@@ -238,12 +212,56 @@ class Yampee_Di_Container
 	/**
 	 * Get the list of tags on a given service
 	 *
-	 * @param $serviceName
+	 * @param string $serviceName
 	 * @return array
 	 */
 	public function getTags($serviceName)
 	{
 		return $this->tags[$serviceName];
+	}
+
+	/**
+	 * Get the list of services names using a given tag
+	 *
+	 * @param string $tag
+	 * @return array
+	 */
+	public function findNamesByTag($tag)
+	{
+		$services = array();
+
+		foreach ($this->tags as $serviceName => $tags) {
+			foreach ($tags as $serviceTag) {
+				if ($serviceTag['name'] == $tag) {
+					$services[] = $serviceName;
+					continue;
+				}
+			}
+		}
+
+		return $services;
+	}
+
+	/**
+	 * Get the list of services using a given tag
+	 *
+	 * @param string $tag
+	 * @return array
+	 */
+	public function findByTag($tag)
+	{
+		$services = array();
+
+		foreach ($this->tags as $serviceName => $tags) {
+			foreach ($tags as $serviceTag) {
+				if ($serviceTag['name'] == $tag) {
+					$services[] = $this->get($serviceName);
+					continue;
+				}
+			}
+		}
+
+		return $services;
 	}
 
 	/**
@@ -255,6 +273,161 @@ class Yampee_Di_Container
 	 */
 	public function hasTag($serviceName, $tagName)
 	{
-		return in_array($tagName, $this->tags[$serviceName]);
+		foreach ($this->tags[$serviceName] as $name => $tag) {
+			if ($name == $tagName) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * @param array $parameters
+	 * @param array $patterns
+	 * @param array $values
+	 * @return array
+	 */
+	protected function remplaceParameters($parameters, $patterns, $values)
+	{
+		foreach ($parameters as $name => $value) {
+			if (is_array($value)) {
+				$parameters[$name] = $this->remplaceParameters($value, $patterns, $values);
+			} else {
+				$parameters[$name] = str_replace($patterns, $values, $value);
+			}
+		}
+
+		return $parameters;
+	}
+
+	/**
+	 * Check the build possibility by tracking recusrives references.
+	 *
+	 * @throws InvalidArgumentException
+	 */
+	protected function checkBuildPossibility()
+	{
+		$definitions = array();
+
+		foreach ($this->definitions as $name => $definition) {
+			$references = array();
+
+			if (! isset($definition['arguments'])) {
+				continue;
+			}
+
+			foreach ($definition['arguments'] as $argument) {
+				if (is_string($argument) && substr($argument, 0, 1) == '@') {
+					$references[] = substr($argument, 1);
+				}
+			}
+
+			$definitions[$name] = array(
+				'name' => $name,
+				'references' => $references,
+			);
+		}
+
+		foreach ($definitions as $definition) {
+			foreach ($definition['references'] as $reference) {
+				if (isset($definitions[$reference])
+					&& in_array($definition['name'], $definitions[$reference]['references'])) {
+						throw new LogicException(sprintf(
+							'Circular reference betwenn %s and %s. The container build can not be completed.',
+							$definition['name'], $definitions[$reference]['name']
+						));
+				}
+			}
+		}
+	}
+
+	/**
+	 * Build a given definition
+	 *
+	 * @throws InvalidArgumentException
+	 */
+	protected function buildDefinition($serviceName)
+	{
+		$serviceDefinition = array_merge(array(
+			'class' => '',
+			'arguments' => array()
+		), $this->definitions[$serviceName]);
+
+		if (! class_exists($serviceDefinition['class']) && isset($serviceDefinition['file'])) {
+			require $serviceDefinition['file'];
+		}
+
+		if (! class_exists($serviceDefinition['class'])) {
+			throw new InvalidArgumentException(sprintf(
+				'Class %s not found in service %s.',
+				$serviceDefinition['class'], $serviceName
+			));
+		}
+
+		$arguments = array();
+		$i = 1;
+
+		foreach ($serviceDefinition['arguments'] as $argument) {
+			if (is_string($argument) && substr($argument, 0, 1) == '%' && substr($argument, -1) == '%') {
+				$paramName = substr($argument, 1, -1);
+
+				if (! $this->hasParameter($paramName)) {
+					throw new InvalidArgumentException(sprintf(
+						'Config element %s does not exists in service definition %s (argument %s)',
+						$paramName, $serviceName, $i
+					));
+				}
+
+				$arguments[] = $this->getParameter($paramName);
+			} elseif (is_string($argument) && substr($argument, 0, 1) == '@') {
+				$referenceName = substr($argument, 1);
+
+				if (isset($this->definitions[$referenceName]) && ! $this->has($referenceName)) {
+					$this->buildDefinition($referenceName);
+				}
+
+				if (! $this->has($referenceName)) {
+					throw new InvalidArgumentException(sprintf(
+						'Reference at %s is not available in service definition %s (argument %s)',
+						$referenceName, $serviceName, $i
+					));
+				}
+
+				$arguments[] = $this->get($referenceName);
+			} else {
+				$parametersRemplacements = array();
+
+				foreach ($this->parameters as $paramName => $paramValue) {
+					$parametersRemplacements['%'.$paramName.'%'] = $paramValue;
+				}
+
+				$arguments[] = $this->remplaceParameters(
+					$argument,
+					array_keys($parametersRemplacements),
+					array_values($parametersRemplacements)
+				);
+			}
+
+			$i++;
+		}
+
+		$reflection = new ReflectionClass($serviceDefinition['class']);
+		$instance = $reflection->newInstanceArgs($arguments);
+
+		if (isset($serviceDefinition['calls']) && ! empty($serviceDefinition['calls'])) {
+			foreach ($serviceDefinition['calls'] as $methodName => $methodArgs) {
+				$method = new ReflectionMethod($instance, $methodName);
+				$method->invokeArgs($instance, $methodArgs);
+			}
+		}
+
+		if (isset($serviceDefinition['tags']) && ! empty($serviceDefinition['tags'])) {
+			foreach ($serviceDefinition['tags'] as $tag) {
+				$this->tags[$serviceName][] = $tag;
+			}
+		}
+
+		$this->set($serviceName, $instance);
 	}
 }
